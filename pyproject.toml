@@ -1,0 +1,9 @@
+[project]
+name = "hlshackathon"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "databricks-sdk>=0.70.0",
+    "requests>=2.32.5",
+    "streamlit>=1.51.0",
+]

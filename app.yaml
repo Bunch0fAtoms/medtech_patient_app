@@ -1,0 +1,3 @@
+name: medtech-patient-app
+description: "MedTech Device Monitoring App with Dashboard and Agent Chat"
+command: ['streamlit', 'run', 'app.py']
