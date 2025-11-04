@@ -82,58 +82,105 @@ def execute_sql_query(sql_query, warehouse_id):
 # ==============================================================================
 # PATIENT PROFILER SECTION
 # ==============================================================================
-st.title("👤 Patient Glucose Profile")
+st.title("👤 Patient Profile")
 
 # Patient ID input
 patient_id = st.text_input("Enter Patient ID:", value="PAT-020953")
 
 if st.button("Load Patient Data") or patient_id:
-    with st.spinner("Loading patient glucose data..."):
-        # SQL query to get patient glucose readings
-        sql_query = f"""
-        SELECT
-          CAST(t.reading_timestamp AS TIMESTAMP) AS reading_timestamp,
-          AVG(t.glucose_value) AS avg_glucose_value
-        FROM
-          `morgancatalog`.`medtech_ldp_1`.`silver_device_telemetry_stream` t
-            JOIN `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry` p
-              ON t.device_id = p.device_id
-        WHERE
-          p.patient_id = '{patient_id}'
-          AND t.reading_timestamp IS NOT NULL
-          AND t.glucose_value IS NOT NULL
-        GROUP BY
-          t.reading_timestamp
-        ORDER BY
-          t.reading_timestamp
+    with st.spinner("Loading patient data..."):
+        # First, get patient information
+        patient_query = f"""
+        SELECT 
+            patient_id,
+            device_id,
+            region,
+            patient_diagnosis,
+            activation_date,
+            birth_year,
+            device_type
+        FROM `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry`
+        WHERE patient_id = '{patient_id}'
         """
         
-        # Execute query
-        df = execute_sql_query(sql_query, WAREHOUSE_ID)
+        patient_df = execute_sql_query(patient_query, WAREHOUSE_ID)
         
-        if df is not None and not df.empty:
-            # Convert reading_timestamp to datetime
-            df['reading_timestamp'] = pd.to_datetime(df['reading_timestamp'])
-            df['avg_glucose_value'] = pd.to_numeric(df['avg_glucose_value'])
+        if patient_df is not None and not patient_df.empty:
+            # Display patient information
+            st.subheader("Patient Information")
             
-            # Display metrics
-            col1, col2, col3 = st.columns(3)
+            patient_data = patient_df.iloc[0]
+            
+            # Display patient details in columns
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Readings", len(df))
+                st.metric("Patient ID", patient_data['patient_id'])
             with col2:
-                st.metric("Avg Glucose", f"{df['avg_glucose_value'].mean():.1f} mg/dL")
+                st.metric("Device ID", patient_data['device_id'])
             with col3:
-                st.metric("Latest Reading", f"{df['avg_glucose_value'].iloc[-1]:.1f} mg/dL")
+                st.metric("Birth Year", int(patient_data['birth_year']))
+            with col4:
+                st.metric("Region", patient_data['region'])
             
-            # Plot line chart
-            st.subheader("Glucose Readings Over Time")
-            st.line_chart(df.set_index('reading_timestamp')['avg_glucose_value'])
+            col5, col6, col7 = st.columns(3)
+            with col5:
+                st.metric("Diagnosis", patient_data['patient_diagnosis'])
+            with col6:
+                st.metric("Device Type", patient_data['device_type'])
+            with col7:
+                activation = pd.to_datetime(patient_data['activation_date']).strftime('%Y-%m-%d')
+                st.metric("Activation Date", activation)
             
-            # Show data table
-            with st.expander("View Raw Data"):
-                st.dataframe(df)
-        elif df is not None:
-            st.warning(f"No data found for patient ID: {patient_id}")
+            st.divider()
+            
+            # Now get glucose readings
+            glucose_query = f"""
+            SELECT
+              CAST(t.reading_timestamp AS TIMESTAMP) AS reading_timestamp,
+              AVG(t.glucose_value) AS avg_glucose_value
+            FROM
+              `morgancatalog`.`medtech_ldp_1`.`silver_device_telemetry_stream` t
+                JOIN `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry` p
+                  ON t.device_id = p.device_id
+            WHERE
+              p.patient_id = '{patient_id}'
+              AND t.reading_timestamp IS NOT NULL
+              AND t.glucose_value IS NOT NULL
+            GROUP BY
+              t.reading_timestamp
+            ORDER BY
+              t.reading_timestamp
+            """
+            
+            glucose_df = execute_sql_query(glucose_query, WAREHOUSE_ID)
+            
+            if glucose_df is not None and not glucose_df.empty:
+                # Convert reading_timestamp to datetime
+                glucose_df['reading_timestamp'] = pd.to_datetime(glucose_df['reading_timestamp'])
+                glucose_df['avg_glucose_value'] = pd.to_numeric(glucose_df['avg_glucose_value'])
+                
+                # Display glucose metrics
+                st.subheader("Glucose Monitoring")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Readings", len(glucose_df))
+                with col2:
+                    st.metric("Avg Glucose", f"{glucose_df['avg_glucose_value'].mean():.1f} mg/dL")
+                with col3:
+                    st.metric("Latest Reading", f"{glucose_df['avg_glucose_value'].iloc[-1]:.1f} mg/dL")
+                
+                # Plot line chart
+                st.subheader("Glucose Readings Over Time")
+                st.line_chart(glucose_df.set_index('reading_timestamp')['avg_glucose_value'])
+                
+                # Show data table
+                with st.expander("View Raw Glucose Data"):
+                    st.dataframe(glucose_df)
+            else:
+                st.warning(f"No glucose readings found for patient ID: {patient_id}")
+                
+        else:
+            st.error(f"Patient ID '{patient_id}' not found in registry.")
 
 # Add a divider
 st.divider()
