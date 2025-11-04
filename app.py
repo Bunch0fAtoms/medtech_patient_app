@@ -84,10 +84,20 @@ def execute_sql_query(sql_query, warehouse_id):
 # ==============================================================================
 st.title("👤 Patient Profile")
 
-# Patient ID input
-patient_id = st.text_input("Enter Patient ID:", value="PAT-020953")
+# Initialize loaded patient ID in session state
+if "loaded_patient_id" not in st.session_state:
+    st.session_state.loaded_patient_id = None
 
-if st.button("Load Patient Data") or patient_id:
+# Patient ID input
+patient_id = st.text_input("Enter Patient ID:")
+
+# Load patient data when button is clicked
+if st.button("Load Patient Data") and patient_id:
+    st.session_state.loaded_patient_id = patient_id
+
+# Display patient data if we have a loaded patient ID
+if st.session_state.loaded_patient_id:
+    loaded_patient_id = st.session_state.loaded_patient_id
     with st.spinner("Loading patient data..."):
         # First, get patient information
         patient_query = f"""
@@ -100,7 +110,7 @@ if st.button("Load Patient Data") or patient_id:
             birth_year,
             device_type
         FROM `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry`
-        WHERE patient_id = '{patient_id}'
+        WHERE patient_id = '{loaded_patient_id}'
         """
         
         patient_df = execute_sql_query(patient_query, WAREHOUSE_ID)
@@ -143,7 +153,7 @@ if st.button("Load Patient Data") or patient_id:
                 JOIN `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry` p
                   ON t.device_id = p.device_id
             WHERE
-              p.patient_id = '{patient_id}'
+              p.patient_id = '{loaded_patient_id}'
               AND t.reading_timestamp IS NOT NULL
               AND t.glucose_value IS NOT NULL
             GROUP BY
@@ -177,10 +187,10 @@ if st.button("Load Patient Data") or patient_id:
                 with st.expander("View Raw Glucose Data"):
                     st.dataframe(glucose_df)
             else:
-                st.warning(f"No glucose readings found for patient ID: {patient_id}")
+                st.warning(f"No glucose readings found for patient ID: {loaded_patient_id}")
                 
         else:
-            st.error(f"Patient ID '{patient_id}' not found in registry.")
+            st.error(f"Patient ID '{loaded_patient_id}' not found in registry.")
 
 # Add a divider
 st.divider()
@@ -194,24 +204,50 @@ st.title("💬 MedTech Agent Chat")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Initialize pending prompt in session state
+if "pending_prompt" not in st.session_state:
+    st.session_state.pending_prompt = None
+
+# Add a quick action button to ask about the current patient
+if st.session_state.loaded_patient_id:
+    if st.button(f"📋 Ask about Patient {st.session_state.loaded_patient_id}"):
+        st.session_state.pending_prompt = f"Tell me about Patient {st.session_state.loaded_patient_id}"
+
 # Display chat messages from history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# React to user input
-if prompt := st.chat_input("Ask a question about your MedTech device data..."):
+# Always show chat input
+user_input = st.chat_input(f"Ask a question about Patient {st.session_state.loaded_patient_id if st.session_state.loaded_patient_id else 'data'}...")
+
+# Check for pending prompt from button or new chat input
+prompt = None
+if st.session_state.pending_prompt:
+    prompt = st.session_state.pending_prompt
+    st.session_state.pending_prompt = None
+elif user_input:
+    prompt = user_input
+
+# Process the prompt
+if prompt:
     # Display user message in chat message container
     st.chat_message("user").markdown(prompt)
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # Add patient context if available
+    if st.session_state.loaded_patient_id:
+        context_prompt = f"Context: The user is currently viewing data for Patient ID: {st.session_state.loaded_patient_id}. {prompt}"
+    else:
+        context_prompt = prompt
 
     # Prepare the request payload with streaming enabled
     request_payload = {
         "input": [
             {
                 "role": "user",
-                "content": prompt
+                "content": context_prompt
             }
         ],
         "stream": True  # Enable streaming
