@@ -3,6 +3,7 @@ import streamlit as st
 import requests
 import json
 import os
+import pandas as pd
 from databricks.sdk import WorkspaceClient
 
 # --- Page Configuration ---
@@ -15,9 +16,8 @@ st.set_page_config(
 # --- Configuration ---
 # Hardcoded for Databricks Apps deployment
 CHAT_ENDPOINT_NAME = 'mas-ea2fbc2e-endpoint'
-DASHBOARD_ID = '01f0b5c1e452196687b984bdb1ff4f70'
 DATABRICKS_HOST = 'https://e2-demo-field-eng.cloud.databricks.com'
-WORKSPACE_ID = '1444828305810485'
+WAREHOUSE_ID = 'fd41d22f135b1170'  # SQL Warehouse ID
 
 # --- Authentication Setup ---
 def get_auth_headers():
@@ -53,21 +53,87 @@ def get_auth_headers():
     
     return {}
 
-# ==============================================================================
-# DASHBOARD SECTION
-# ==============================================================================
-st.title("📊 MedTech Quality Management System Dashboard")
+# --- SQL Execution ---
+def execute_sql_query(sql_query, warehouse_id):
+    """Execute SQL query using Databricks SQL Statement Execution API"""
+    try:
+        w = WorkspaceClient()
+        
+        # Execute the query
+        result = w.statement_execution.execute_statement(
+            warehouse_id=warehouse_id,
+            statement=sql_query,
+            wait_timeout='30s'
+        )
+        
+        # Extract data
+        if result.result and result.result.data_array:
+            columns = [col.name for col in result.manifest.schema.columns]
+            data = result.result.data_array
+            df = pd.DataFrame(data, columns=columns)
+            return df
+        else:
+            return pd.DataFrame()
+            
+    except Exception as e:
+        st.error(f"Error executing SQL query: {str(e)}")
+        return None
 
-# Construct the correct embed URL with workspace ID
-embed_url = f"{DATABRICKS_HOST}/embed/dashboardsv3/{DASHBOARD_ID}?o={WORKSPACE_ID}"
+# ==============================================================================
+# PATIENT PROFILER SECTION
+# ==============================================================================
+st.title("👤 Patient Glucose Profile")
 
-# Direct iframe embedding
-st.components.v1.iframe(
-    src=embed_url,
-    width=None,
-    height=600,
-    scrolling=True
-)
+# Patient ID input
+patient_id = st.text_input("Enter Patient ID:", value="PAT-020953")
+
+if st.button("Load Patient Data") or patient_id:
+    with st.spinner("Loading patient glucose data..."):
+        # SQL query to get patient glucose readings
+        sql_query = f"""
+        SELECT
+          CAST(t.reading_timestamp AS TIMESTAMP) AS reading_timestamp,
+          AVG(t.glucose_value) AS avg_glucose_value
+        FROM
+          `morgancatalog`.`medtech_ldp_1`.`silver_device_telemetry_stream` t
+            JOIN `morgancatalog`.`medtech_ldp_1`.`silver_patient_registry` p
+              ON t.device_id = p.device_id
+        WHERE
+          p.patient_id = '{patient_id}'
+          AND t.reading_timestamp IS NOT NULL
+          AND t.glucose_value IS NOT NULL
+        GROUP BY
+          t.reading_timestamp
+        ORDER BY
+          t.reading_timestamp
+        """
+        
+        # Execute query
+        df = execute_sql_query(sql_query, WAREHOUSE_ID)
+        
+        if df is not None and not df.empty:
+            # Convert reading_timestamp to datetime
+            df['reading_timestamp'] = pd.to_datetime(df['reading_timestamp'])
+            df['avg_glucose_value'] = pd.to_numeric(df['avg_glucose_value'])
+            
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Readings", len(df))
+            with col2:
+                st.metric("Avg Glucose", f"{df['avg_glucose_value'].mean():.1f} mg/dL")
+            with col3:
+                st.metric("Latest Reading", f"{df['avg_glucose_value'].iloc[-1]:.1f} mg/dL")
+            
+            # Plot line chart
+            st.subheader("Glucose Readings Over Time")
+            st.line_chart(df.set_index('reading_timestamp')['avg_glucose_value'])
+            
+            # Show data table
+            with st.expander("View Raw Data"):
+                st.dataframe(df)
+        elif df is not None:
+            st.warning(f"No data found for patient ID: {patient_id}")
 
 # Add a divider
 st.divider()
